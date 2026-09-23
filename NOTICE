@@ -1,0 +1,15 @@
+An Empirical Study on Expert Pruning
+Copyright (c) 2026 MingZwhy
+
+This project is released under the MIT License; see LICENSE.
+
+This repository vendors third-party evaluation harnesses as git submodules under
+3rdparty/, each under its own license:
+
+  vllm-project/vllm                    Apache License 2.0
+  huggingface/lighteval                MIT License
+  EleutherAI/lm-evaluation-harness     MIT License
+  EvolvingLMMs-Lab/lmms-eval           MIT License
+
+The benchmark datasets referenced by tasks/ and tasks_lm_eval/ are distributed by
+their respective publishers under their own terms and are not redistributed here.

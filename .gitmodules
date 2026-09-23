@@ -1,0 +1,13 @@
+[submodule "3rdparty/vllm"]
+	path = 3rdparty/vllm
+	url = https://github.com/vllm-project/vllm.git
+[submodule "3rdparty/lighteval"]
+	path = 3rdparty/lighteval
+	url = https://github.com/MingZwhy/lighteval.git
+	branch = expert-pruning-mods
+[submodule "3rdparty/lm-evaluation-harness"]
+	path = 3rdparty/lm-evaluation-harness
+	url = https://github.com/EleutherAI/lm-evaluation-harness.git
+[submodule "3rdparty/lmms-eval"]
+	path = 3rdparty/lmms-eval
+	url = https://github.com/EvolvingLMMs-Lab/lmms-eval.git

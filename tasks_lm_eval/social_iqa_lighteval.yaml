@@ -1,0 +1,27 @@
+# Social IQa, reading the parquet mirror instead of the dataset script.
+#
+# lm-evaluation-harness ships `social_iqa` pointing at the `social_i_qa` repository, which serves the
+# data through a loading script. datasets 5.0.1 refuses those outright ("Dataset scripts are no longer
+# supported"), and `allenai/social_i_qa` is the same repository under its new name, so it fails too.
+# `lighteval/siqa` is a parquet copy with the columns this task already expects — context, question,
+# answerA/B/C and a label of "1", "2" or "3" — so everything below except the path is copied verbatim
+# from the harness's own siqa.yaml, and the scores stay comparable to published ones.
+#
+# The task is named separately rather than shadowing `social_iqa`: a TaskManager given an include path
+# holds both definitions, and which one wins is not something to leave to registration order.
+task: social_iqa_siqa_parquet
+dataset_path: lighteval/siqa
+dataset_name: null
+output_type: multiple_choice
+training_split: train
+validation_split: validation
+doc_to_text: "Q: {{context}} {{question}}\nA:"
+target_delimiter: " "
+doc_to_choice: "{{[answerA, answerB, answerC]}}"
+doc_to_target: "{{ (label|int) - 1 }}"
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 0.0

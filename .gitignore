@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+.python-version
+
+# Evaluation outputs. The per-model summary tables are part of the repository;
+# the raw run directories they are derived from are not (tens of GB of details).
+results/*
+!results/*/
+results/*/*
+!results/*/RESULTS.md
+!results/*/MANUAL_OVERRIDES.json
+data/
+.moe_override/
+.expert_pruning_stats/
+
+# Logs
+*.log
+local_logs/
+
+# Local experiment launchers, which are host-specific and not part of the
+# published interface. Everything under scripts/ is.
+/local_*.sh
+/tmp_*.sh
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

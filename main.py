@@ -590,7 +590,11 @@ def _source_listing_lines(model_path: str) -> list[str]:
 
 
 def _make_expert_pruning_stats_dir() -> str:
-    stats_dir = Path(REPO_ROOT) / ".expert_pruning_stats" / uuid.uuid4().hex
+    # Router workers rewrite their snapshot here while generating; on a network
+    # filesystem every path lookup costs a round trip, so allow a local root.
+    root = os.environ.get("EXPERT_PRUNING_STATS_ROOT")
+    base = Path(root) if root else Path(REPO_ROOT) / ".expert_pruning_stats"
+    stats_dir = base / uuid.uuid4().hex
     stats_dir.mkdir(parents=True, exist_ok=True)
     return str(stats_dir)
 
@@ -658,6 +662,7 @@ def _expert_pruning_cache_fingerprint() -> str:
     """Fingerprint router behavior omitted from Lighteval's model config."""
     operational_keys = {
         "EXPERT_PRUNING_STATS_DIR",
+        "EXPERT_PRUNING_STATS_ROOT",
         "EXPERT_PRUNING_STATS_FLUSH_INTERVAL",
         "EXPERT_PRUNING_DEBUG",
         "EXPERT_PRUNING_DEBUG_MAX_PRINTS",
@@ -3732,7 +3737,9 @@ def main():
         os.environ["EXPERT_PRUNING_ATTENTION_SINK_PROBE_TOPK"] = str(
             args.attention_sink_probe_topk)
         os.environ["EXPERT_PRUNING_STATS_DIR"] = expert_pruning_stats_dir
-        os.environ["EXPERT_PRUNING_STATS_FLUSH_INTERVAL"] = "1"
+        # Every flush drains the device counters and rewrites a JSON file; once per
+        # MoE layer call is costly on long generations, so a caller may widen it.
+        os.environ.setdefault("EXPERT_PRUNING_STATS_FLUSH_INTERVAL", "1")
         from expert_pruning import install_vllm_expert_pruning_router
 
         installed_router_patch = install_vllm_expert_pruning_router(

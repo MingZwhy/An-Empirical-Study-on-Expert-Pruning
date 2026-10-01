@@ -109,6 +109,13 @@ class BanMoePatch(AbstractContextManager):
                     self._make_bailing_moe_forward(module),
                     module,
                 )
+            elif self._is_qwen3_5_moe_block(module):
+                original_forward = module.forward
+                self._original_forwards.append((module, original_forward))
+                module.forward = types.MethodType(
+                    self._make_qwen3_5_moe_forward(module),
+                    module,
+                )
         if not self._original_forwards:
             model_type = getattr(getattr(self.model, "config", None),
                                  "model_type", "unknown")
@@ -116,8 +123,8 @@ class BanMoePatch(AbstractContextManager):
                 "Ban calibration did not find supported MoE modules to patch "
                 f"(model_type={model_type}). Supported Transformers modules "
                 "currently include Qwen3MoeSparseMoeBlock, "
-                "Qwen3NextSparseMoeBlock, GptOssMLP, and "
-                "BailingMoeSparseMoeBlock.")
+                "Qwen3NextSparseMoeBlock, Qwen3_5MoeSparseMoeBlock, GptOssMLP, "
+                "and BailingMoeSparseMoeBlock.")
 
     def remove(self) -> None:
         for module, original_forward in self._original_forwards:
@@ -150,6 +157,64 @@ class BanMoePatch(AbstractContextManager):
                 and hasattr(module, "gate")
                 and hasattr(module, "experts")
                 and hasattr(module, "num_experts_per_tok"))
+
+    @staticmethod
+    def _is_qwen3_5_moe_block(module: torch.nn.Module) -> bool:
+        return (module.__class__.__name__ == "Qwen3_5MoeSparseMoeBlock"
+                and hasattr(getattr(module, "gate", None), "top_k")
+                and hasattr(module, "experts")
+                and hasattr(module, "shared_expert_gate"))
+
+    def _make_qwen3_5_moe_forward(self, patched_module: torch.nn.Module):
+        """Qwen3.5/3.6 MoE (Transformers 5): the router module returns
+        (logits, renormalised top-k weights, indices) and the experts are one
+        fused module taking indices and weights, plus a sigmoid-gated shared
+        expert that pruning leaves alone."""
+        patch = self
+        layer_name = self._module_names.get(patched_module,
+                                            f"qwen3_5_moe_{id(patched_module)}")
+        layer_index = _layer_name_to_index(layer_name)
+        base_topk = int(patched_module.gate.top_k)
+        self.layer_names[layer_index] = layer_name
+        self.layer_topk[layer_index] = base_topk
+
+        def forward(module_self, hidden_states: torch.Tensor):
+            batch_size, sequence_length, hidden_dim = hidden_states.shape
+            flat_hidden_states = hidden_states.view(-1, hidden_dim)
+            router_logits = F.linear(flat_hidden_states, module_self.gate.weight)
+            routing_probs = F.softmax(router_logits, dim=-1, dtype=torch.float)
+            raw_routing_weights, selected_experts = torch.topk(
+                routing_probs,
+                base_topk,
+                dim=-1,
+                sorted=True,
+            )
+            if patch.collect_ratios and base_topk >= 3:
+                ratios = (raw_routing_weights[:, :3].sum(dim=-1) /
+                          raw_routing_weights.sum(dim=-1).clamp_min(1e-20))
+                patch.r_min = min(patch.r_min, float(ratios.min().item()))
+                patch.r_max = max(patch.r_max, float(ratios.max().item()))
+
+            active_topk = base_topk
+            if patch.pruned_layer_index == layer_index:
+                active_topk = min(max(1, patch.k_pruned), base_topk)
+            routing_weights = raw_routing_weights[:, :active_topk]
+            selected_experts = selected_experts[:, :active_topk]
+            routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True)
+            routing_weights = routing_weights.to(router_logits.dtype)
+
+            expert_output = module_self.experts(flat_hidden_states,
+                                                selected_experts,
+                                                routing_weights)
+            shared_expert_output = module_self.shared_expert(flat_hidden_states)
+            shared_expert_output = (
+                F.sigmoid(module_self.shared_expert_gate(flat_hidden_states)) *
+                shared_expert_output)
+            final_hidden_states = expert_output + shared_expert_output
+            return final_hidden_states.reshape(batch_size, sequence_length,
+                                               hidden_dim)
+
+        return forward
 
     def _make_qwen3_moe_forward(self, patched_module: torch.nn.Module):
         patch = self

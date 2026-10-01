@@ -525,6 +525,8 @@ def _patch_dummy_run_stats_guard(module_name: str, class_name: str) -> None:
 def _install_dummy_run_stats_guards() -> None:
     _patch_dummy_run_stats_guard("vllm.v1.worker.gpu_model_runner",
                                  "GPUModelRunner")
+    _patch_dummy_run_stats_guard("vllm.v1.worker.gpu.model_runner",
+                                 "GPUModelRunner")
     _patch_dummy_run_stats_guard("vllm.worker.model_runner",
                                  "GPUModelRunnerBase")
     _patch_dummy_run_stats_guard("vllm.worker.model_runner", "ModelRunner")
@@ -546,6 +548,20 @@ def _assert_layer_routes_through_patch(layer: Any) -> None:
         reason = "use_grouped_topk=True (routes through grouped_topk)"
     elif getattr(layer, "custom_routing_function", None) is not None:
         reason = "custom_routing_function is set"
+    else:
+        # Newer vLLM builds each MoE layer around a router object, and only
+        # FusedTopKRouter calls fused_topk. A monolithic expert kernel takes the
+        # router logits and selects experts inside the kernel, skipping the
+        # router altogether.
+        router = getattr(layer, "router", None)
+        if router is not None and type(router).__name__ != "FusedTopKRouter":
+            reason = (f"router is {type(router).__name__}, and only "
+                      "FusedTopKRouter routes through fused_topk")
+        quant_method = getattr(getattr(layer, "routed_experts", None),
+                               "quant_method", None)
+        if reason is None and getattr(quant_method, "is_monolithic", False):
+            reason = (f"the expert kernel ({type(quant_method).__name__}) is "
+                      "monolithic and selects experts itself")
     if reason is None:
         return
     raise RuntimeError(
@@ -556,28 +572,48 @@ def _assert_layer_routes_through_patch(layer: Any) -> None:
         "evaluating this model.")
 
 
-def _patch_fused_moe_layer_context() -> None:
+def _moe_layer_entry_points() -> list[tuple[type, list[str]]]:
+    """The class-level method that runs once per MoE layer forward, per vLLM generation."""
     try:
-        module = importlib.import_module(
+        layer_module = importlib.import_module(
             "vllm.model_executor.layers.fused_moe.layer")
     except Exception:
-        return
+        layer_module = None
+    cls = getattr(layer_module, "FusedMoE", None)
+    if isinstance(cls, type):
+        # vLLM <=0.10 exposes forward_impl methods. vLLM 0.17's FusedMoE is a
+        # CustomOp whose only class-level entrypoint is forward(), which dispatches
+        # through an instance _forward_method. Wrap exactly one layer boundary:
+        # prefer the implementation methods when present, otherwise forward().
+        method_names = [
+            name for name in ("forward_impl", "forward_impl_chunked")
+            if getattr(cls, name, None) is not None
+        ]
+        if not method_names and getattr(cls, "forward", None) is not None:
+            method_names = ["forward"]
+        return [(cls, method_names)]
 
-    cls = getattr(module, "FusedMoE", None)
-    if cls is None or cls in _patched_fused_moe_layer_classes:
-        return
+    # vLLM 0.28 has no FusedMoE class: FusedMoEFactory assembles a MoERunner, and
+    # the per-layer custom op calls its _forward_impl.
+    try:
+        runner_module = importlib.import_module(
+            "vllm.model_executor.layers.fused_moe.runner.moe_runner")
+    except Exception:
+        return []
+    runner_cls = getattr(runner_module, "MoERunner", None)
+    if (isinstance(runner_cls, type)
+            and getattr(runner_cls, "_forward_impl", None) is not None):
+        return [(runner_cls, ["_forward_impl"])]
+    return []
 
-    # vLLM <=0.10 exposes forward_impl methods. vLLM 0.17's FusedMoE is a
-    # CustomOp whose only class-level entrypoint is forward(), which dispatches
-    # through an instance _forward_method. Wrap exactly one layer boundary:
-    # prefer the implementation methods when present, otherwise forward().
-    method_names = [
-        name for name in ("forward_impl", "forward_impl_chunked")
-        if getattr(cls, name, None) is not None
-    ]
-    if not method_names and getattr(cls, "forward", None) is not None:
-        method_names = ["forward"]
 
+def _patch_fused_moe_layer_context() -> None:
+    for cls, method_names in _moe_layer_entry_points():
+        if cls not in _patched_fused_moe_layer_classes:
+            _wrap_moe_layer_methods(cls, method_names)
+
+
+def _wrap_moe_layer_methods(cls: type, method_names: list[str]) -> None:
     for method_name in method_names:
         original = getattr(cls, method_name, None)
         if original is None:

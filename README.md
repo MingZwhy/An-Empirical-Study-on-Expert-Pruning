@@ -457,8 +457,9 @@ and swapping one in would quietly change what the benchmark measures. The other 
 benchmarks are ungated.
 
 Two options are worth knowing before you spend GPU hours: `--smoke` shrinks every
-run to a few samples and short generations, and `--only` picks one configuration
-out of a stage.
+run to a few samples and short generations, writing them under `results/_smoke/` so
+they never stand in for a full run, and `--only` picks one configuration out of a
+stage.
 
 ```bash
 bash scripts/run.sh qwen3-30b baseline fixedk --smoke --gpus 0,1

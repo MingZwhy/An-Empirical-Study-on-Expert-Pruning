@@ -120,7 +120,14 @@ ep_begin() {
     source "$EP_MODEL_HOME/model.env"
     ep_parse_flags "$@"
 
-    EP_OUT_ROOT="${EP_OUT_ROOT:-$EP_REPO_ROOT/results}"
+    # A configuration with a scores file counts as done and is skipped, so smoke runs
+    # get their own tree: four-sample results under results/<model>/ would make the
+    # full run that follows skip those configurations and keep the smoke scores.
+    if (( EP_SMOKE )); then
+        EP_OUT_ROOT="${EP_OUT_ROOT:-$EP_REPO_ROOT/results/_smoke}"
+    else
+        EP_OUT_ROOT="${EP_OUT_ROOT:-$EP_REPO_ROOT/results}"
+    fi
     EP_LOG_DIR="${EP_LOG_DIR:-$EP_REPO_ROOT/local_logs/$EP_MODEL_NAME}"
     EP_RAN=0 EP_SKIPPED=0 EP_FAILED=0 EP_FILTERED=0
 

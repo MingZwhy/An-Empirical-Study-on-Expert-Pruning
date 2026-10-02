@@ -143,11 +143,15 @@ def main() -> int:
     if problems:
         return 1
 
-    print(f"[fetch_gpqa] wrote {args.dest.relative_to(REPO)}/ "
+    dest = args.dest.resolve()
+    shown = dest.relative_to(REPO) if dest.is_relative_to(REPO) else dest
+    print(f"[fetch_gpqa] wrote {shown}/ "
           f"({', '.join(sorted(c + '.csv' for c in CONFIGS))})")
-    print("[fetch_gpqa] the sweep scripts pick this up automatically; a bare main.py "
-          "call needs\n"
-          f"             EP_GPQA_PATH={args.dest}")
+    if dest == DEST.resolve():
+        print("[fetch_gpqa] main.py reads it from here automatically")
+    else:
+        print("[fetch_gpqa] main.py only looks in data/gpqa/ by itself; for this copy set\n"
+              f"             EP_GPQA_PATH={dest}")
     return 0
 
 

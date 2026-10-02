@@ -408,7 +408,8 @@ Hub，同意门禁并登录之后就会走 Hub（那边是自动批准，不是�
 字符串，还原不出四选一。
 
 两个选项值得在烧卡之前知道：`--smoke` 把每次运行缩到几条样本和很短的生成，
-`--only` 从一个阶段里挑出单个配置。
+结果单独写到 `results/_smoke/`，不会被正式运行当成已完成而跳过；`--only` 从一个
+阶段里挑出单个配置。
 
 ```bash
 bash scripts/run.sh qwen3-30b baseline fixedk --smoke --gpus 0,1

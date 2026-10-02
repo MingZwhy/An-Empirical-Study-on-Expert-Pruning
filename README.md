@@ -532,7 +532,10 @@ results/<model>/RESULTS.md     per-model tables
   `lm-evaluation-harness` is upstream v0.4.13, unmodified.
 - **Log-likelihood QA is scored as bare continuation**, no chat template, because
   the published numbers for those four sets are. Applying a template changes them
-  and makes them incomparable.
+  and makes them incomparable. The one addition is Gemma's `<bos>`: its tokenizer
+  config does not add the token the model always saw first in training, and
+  without it every Gemma QA score sits at chance (ARC-Easy 0.345, against 0.675
+  with it).
 - **Generation caching is fingerprinted on the pruning configuration**, so a
   sweep cannot silently replay samples generated under different settings. See
   [`docs/compact_cache_contamination.md`](docs/compact_cache_contamination.md).

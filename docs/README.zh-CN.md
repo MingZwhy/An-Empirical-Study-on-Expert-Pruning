@@ -479,7 +479,9 @@ results/<model>/RESULTS.md     各模型结果表
   所带补丁在其历史里全部标了 `[ExpertPruning-mod]`；
   `lm-evaluation-harness` 是上游 v0.4.13，未改动。
 - **log-likelihood QA 按裸续写打分**，不套 chat template，因为那四个集合的
-  公开分数就是这么打的。套模板会改变数值并使其不可比。
+  公开分数就是这么打的。套模板会改变数值并使其不可比。唯一额外加上的是
+  Gemma 的 `<bos>`：它的 tokenizer 配置不会自动加这个训练时总在开头的 token，
+  缺了它 Gemma 的 QA 分数全部落在随机水平（ARC-Easy 0.345，加上后 0.675）。
 - **生成缓存按剪枝配置指纹化**，所以一次 sweep 不会静默复用在别的设置下
   生成的样本。见 [`docs/compact_cache_contamination.md`](compact_cache_contamination.md)。
 - **已知的粗糙之处都写下来了**，没有藏：

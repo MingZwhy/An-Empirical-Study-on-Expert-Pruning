@@ -120,7 +120,24 @@ def _model_kwargs(args, tensor_parallel_size: int) -> dict:
         kwargs["pipeline_parallel_size"] = args.pipeline_parallel_size
     if args.data_parallel_size is not None:
         kwargs["data_parallel_size"] = args.data_parallel_size
+    if not args.lm_eval_apply_chat_template and _needs_bos_token(args.model_path):
+        kwargs["add_bos_token"] = True
     return _drop_unsupported_engine_args(kwargs)
+
+
+def _needs_bos_token(model_path: str) -> bool:
+    """Gemma is trained with <bos> at the start of every sequence, but its tokenizer
+    config leaves add_bos_token unset, so tokenize() omits it. These suites score bare
+    continuations with no chat template to put it back, and without it every Gemma QA
+    column lands at chance (ARC-Easy 0.345 against 0.675 with it). Gemma's chat
+    template writes its own <bos>, so with a template on this would add a second one."""
+    try:
+        config = json.loads((Path(model_path) / "config.json").read_text())
+    except (OSError, ValueError):
+        return False
+    model_types = (config.get("model_type") or "",
+                   (config.get("text_config") or {}).get("model_type") or "")
+    return any(t.startswith("gemma") for t in model_types)
 
 
 # lm-eval hands anything it does not recognise straight to vllm.LLM, which
@@ -130,7 +147,7 @@ def _model_kwargs(args, tensor_parallel_size: int) -> dict:
 # aborts with "EngineArgs.__init__() got an unexpected keyword argument" after
 # the harness has already loaded its datasets. Filtering against the installed
 # signature keeps one call site working on both.
-_LM_EVAL_OWN_ARGS = frozenset({"pretrained", "batch_size"})
+_LM_EVAL_OWN_ARGS = frozenset({"pretrained", "batch_size", "add_bos_token"})
 
 
 def _drop_unsupported_engine_args(kwargs: dict) -> dict:

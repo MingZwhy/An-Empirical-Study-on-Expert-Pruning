@@ -530,21 +530,30 @@ def prepare_model_dir_with_num_experts_per_tok(model_path: str, num_experts_per_
         raise ValueError(f"未找到 config.json: {config_path}")
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
-    if _get_moe_num_experts_per_tok(config) is None:
+    native_k = _get_moe_num_experts_per_tok(config)
+    if native_k is None:
         raise ValueError(
             "config.json 中找不到每 token 专家数字段（顶层或 text_config 下的 "
             f"{' / '.join(sorted({k for _, k in _MOE_TOPK_SITES}))}），"
             f"当前可能不是 MoE 模型: {config_path}")
     _set_moe_num_experts_per_tok(config, num_experts_per_tok)
+    hash_shards = {}
+    if num_experts_per_tok != native_k:
+        from expert_pruning.hash_routing import hash_table_shards
+        hash_shards = hash_table_shards(model_path)
+    if hash_shards and num_experts_per_tok > native_k:
+        raise ValueError(f"{model_path} 的哈希路由表只有 {native_k} 列，无法扩到 k={num_experts_per_tok}")
     override_root = os.path.join(REPO_ROOT, ".moe_override")
     short_name = get_short_model_name(model_path)
     # Two checkpoints can share a basename, so the source path has to be part of the
     # directory name; otherwise the second model silently reuses the first one's links.
     # The source listing is part of it too, so a view is never stale and never has to be
     # rewritten in place — rewriting raced with concurrent runs reading the same view and
-    # made vLLM fail on a shard that vanished mid-load.
+    # made vLLM fail on a shard that vanished mid-load. Views that slice hash tables are
+    # named apart from the config-only views older versions built for the same k.
     source_digest = hashlib.sha256(
-        "\n".join([model_path] + _source_listing_lines(model_path)).encode()
+        "\n".join([model_path] + _source_listing_lines(model_path)
+                  + (["hash-table-prefix"] if hash_shards else [])).encode()
     ).hexdigest()[:12]
     dest_dir = os.path.join(
         override_root,
@@ -557,12 +566,18 @@ def prepare_model_dir_with_num_experts_per_tok(model_path: str, num_experts_per_
     tmp_dir = f"{dest_dir}.tmp.{os.getpid()}.{uuid.uuid4().hex[:8]}"
     os.makedirs(tmp_dir)
     try:
+        if hash_shards:
+            from expert_pruning.hash_routing import write_sliced_shard
+            print(f"MoE 哈希路由表按 k={num_experts_per_tok} 取前几列，重写 {len(hash_shards)} 个分片: "
+                  f"{sorted(hash_shards)}", flush=True)
         for name in os.listdir(model_path):
             src = os.path.join(model_path, name)
             dst = os.path.join(tmp_dir, name)
             if name == "config.json":
                 with open(dst, "w", encoding="utf-8") as f:
                     json.dump(config, f, indent=2, ensure_ascii=False)
+            elif name in hash_shards:
+                write_sliced_shard(src, dst, hash_shards[name], num_experts_per_tok, native_k)
             else:
                 os.symlink(src, dst)
         try:

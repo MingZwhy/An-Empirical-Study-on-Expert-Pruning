@@ -7,6 +7,12 @@
 # num_experts_per_tok and lets the model's own router rank as usual, so
 # it needs no engine patch and works in either environment.
 #
+# Layers 0-2 are the exception: they take their experts from tid2eid
+# tables, not from router scores, and a table is as wide as the native k.
+# The overlay keeps each table's first k columns, which means rewriting
+# the three shards that hold them, about 11 GB per k and once per k
+# (expert_pruning/hash_routing.py).
+#
 # The whole ladder is 5 runs. Use --only to pick one, e.g.
 #   bash deepseek-v4-flash-0731/fixedk.sh --only k4
 

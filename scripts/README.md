@@ -103,7 +103,7 @@ GPU and no checkpoint, and it is how a typo in a knob name gets caught before a
 run loads 60 GB of weights and dies at argument parsing. The count it reports does
 not depend on what you have already run.
 
-Two properties are checked directly, both on CPU in about a second:
+Three properties are checked directly, all on CPU in a second or two:
 
 ```bash
 python scripts/test_fixedk_overlay.py
@@ -115,6 +115,17 @@ top level, the same under `text_config`, `top_k_experts` for Gemma 4 — and the
 in the config is the name the engine reads. Writing the wrong one prunes nothing
 while the run still reports a pruned budget, which is the one failure here that is
 both silent and plausible-looking.
+
+```bash
+python scripts/test_hash_table_overlay.py
+```
+
+That DeepSeek-V4's Fixed-K overlay cuts each `tid2eid` hash-routing table to its
+first k columns and leaves every other tensor in the shard bit for bit as it was.
+Those three layers take their experts from the table rather than from router
+scores, and the engine sizes the table from the per-token expert count, so the
+overlay has to rewrite it. Needs torch and safetensors, which either environment
+has.
 
 ```bash
 python scripts/test_diep_gamma_alpha.py

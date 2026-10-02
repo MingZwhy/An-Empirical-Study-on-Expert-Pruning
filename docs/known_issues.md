@@ -984,3 +984,53 @@ and the datasets are built, about five minutes in. Nothing in the message points
 *inside* the harness's task tree, where the harness's own recursive scan finds it and its path arithmetic
 holds. Mirroring happens per run, so hosts that keep their own checkout stay in step without a
 provisioning step.
+
+## Routing statistics were written to disk on every MoE layer call
+
+Status: **fixed.** Measured 2026-10-01.
+
+The router counts selected experts on the device and writes its counters to a JSON file every
+`EXPERT_PRUNING_STATS_FLUSH_INTERVAL` routing calls, then once more as each engine process exits.
+`routing.py` defaults the interval to 512, but `main.py` set it to 1 for every run, a leftover from before
+the counters lived on the device and before the exit-time write existed, when writing on every call was
+the only way the last calls reached the file. So every MoE layer of every decode step synchronized the
+CUDA stream and rewrote a file in `.expert_pruning_stats/` under the repository, which on a cluster
+usually means a network filesystem.
+
+One configuration run five ways side by side on one node (Qwen3-30B-A3B-Instruct-2507, NAEE beta=0.35,
+512 gsm8k prompts, two cards, eager):
+
+| flush interval | statistics directory | generation | average experts (routed tokens) |
+| --- | --- | --- | --- |
+| 1 | network filesystem | stopped at 26 min, 501 of 512 done | — |
+| 1 | local disk | 2 min 54 s | 6.260721 (17,664,096) |
+| 512 | network filesystem | 1 min 48 s | 6.260721 (17,664,096) |
+| 512 | local disk | 2 min 03 s | 6.272555 (17,864,352) |
+| vLLM's own top-k, no router | — | 1 min 48 s | — |
+
+At 512 the router costs nothing measurable over vLLM's own top-k. At 1 it cost 60% against the arm
+that generated the same tokens, with the statistics on local disk, and more than a factor of 14 on the
+network filesystem, where the last prompts were still crawling at 30 seconds each when the run was
+stopped. The averages agree to the last digit wherever the generated tokens agree; the 512/local arm
+sampled slightly different completions, since batching is not invariant (see the QA harness section
+above), and that is all its different count reflects. Every published average was produced at
+interval 1, so no table changes, only the time it takes to reproduce one.
+
+Interval 512 is exact only because the statistics are read after the engine has exited. lighteval tears
+its engine down inside `evaluate()`, before `main.py` reads anything. The lm_eval and lmms-eval paths
+read first and tore down afterwards, which was right only at interval 1: a 500-question ARC-Easy run
+makes 240 routing calls per worker, less than one interval, so reading first would have found no file at
+all. Both now tear down first.
+
+Two guards keep it exact. Each snapshot records whether it is the exit-time one and at what interval it
+was written, and the collector warns and writes `statistics_complete: false` when a process's last file
+is a periodic one at an interval above 1, as it is for a worker killed during shutdown. And `main.py`
+asks vLLM to spawn its engine processes when it collects statistics,
+because a forked child leaves through `os._exit` and never runs the exit hook. vLLM had chosen spawn in
+every run here anyway, but only because something had initialized CUDA in the parent first.
+
+After the change, ARC-Easy 500 with NAEE measures 5.232894 at interval 512 and at interval 1, with every
+worker's file final; gsm8k at one and two cards, and Dynamic Routing on Qwen3.6-35B-A3B under vLLM 0.28,
+all report complete statistics. `EXPERT_PRUNING_STATS_FLUSH_INTERVAL=1` restores per-call snapshots, and
+`EXPERT_PRUNING_STATS_ROOT` moves the statistics directory, which is worth pointing at local disk when
+the repository lives on a slow network filesystem.

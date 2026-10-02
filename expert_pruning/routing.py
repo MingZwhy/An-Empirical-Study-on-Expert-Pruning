@@ -2842,7 +2842,7 @@ def _record_routing_stats(
     _write_routing_stats_snapshot(topk)
 
 
-def _write_routing_stats_snapshot(topk: int) -> None:
+def _write_routing_stats_snapshot(topk: int, final: bool = False) -> None:
     """Write this worker's cumulative routing statistics to the stats directory."""
     if _STATS_DIR is None:
         return
@@ -2854,6 +2854,10 @@ def _write_routing_stats_snapshot(topk: int) -> None:
     tmp_path = _STATS_DIR / f".routing_stats_{pid}.json.tmp"
     payload = {
         "pid": pid,
+        # Only the snapshot written at exit covers every call; a periodic one lags by up to
+        # _STATS_FLUSH_INTERVAL - 1 of them.
+        "final": final,
+        "flush_interval": _STATS_FLUSH_INTERVAL,
         "method": _ROUTING_METHOD,
         "naee_beta": _NAEE_BETA,
         "naee_k_min": _NAEE_K_MIN,
@@ -3128,7 +3132,7 @@ def _flush_routing_stats_at_exit() -> None:
     if _STATS_LAST_TOPK is None or _STATS_TOTAL_CALLS == 0:
         return
     try:
-        _write_routing_stats_snapshot(_STATS_LAST_TOPK)
+        _write_routing_stats_snapshot(_STATS_LAST_TOPK, final=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[expert_pruning] final routing-stats flush failed: {exc}")
 

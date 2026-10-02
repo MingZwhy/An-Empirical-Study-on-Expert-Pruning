@@ -1410,6 +1410,14 @@ def _collect_expert_pruning_stats(stats_dir: str | None) -> dict | None:
     if total_tokens == 0:
         return None
     average_selected_experts = total_selected / total_tokens
+    # Read once the engine has exited: a worker whose file is not its exit-time snapshot
+    # was killed, and the calls after its last periodic snapshot are missing.
+    unfinished = [item.get("pid") for item in worker_stats
+                  if not item.get("final") and item.get("flush_interval") != 1]
+    if unfinished:
+        print(f"[expert_pruning] {len(unfinished)} 个 worker 的路由统计不是退出时写的最终快照 "
+              f"(pid {unfinished})：平均专家数少计了它们最后一次周期写入之后的调用。"
+              "需要逐次精确时设 EXPERT_PRUNING_STATS_FLUSH_INTERVAL=1。", flush=True)
     if method == "ban" and ban_total_tokens == 0:
         ban_total_tokens = total_tokens
         ban_total_k = total_selected
@@ -1671,6 +1679,7 @@ def _collect_expert_pruning_stats(stats_dir: str | None) -> dict | None:
         "total_routed_tokens": total_tokens,
         "total_routing_calls": total_calls,
         "num_worker_stat_files": len(worker_stats),
+        "statistics_complete": not unfinished,
         "worker_stats": worker_stats,
     }
 
@@ -3737,9 +3746,10 @@ def main():
         os.environ["EXPERT_PRUNING_ATTENTION_SINK_PROBE_TOPK"] = str(
             args.attention_sink_probe_topk)
         os.environ["EXPERT_PRUNING_STATS_DIR"] = expert_pruning_stats_dir
-        # Every flush drains the device counters and rewrites a JSON file; once per
-        # MoE layer call is costly on long generations, so a caller may widen it.
-        os.environ.setdefault("EXPERT_PRUNING_STATS_FLUSH_INTERVAL", "1")
+        # Each engine process writes its complete statistics from an atexit hook, which a
+        # forked child skips: it leaves through os._exit. vLLM only picks spawn by itself
+        # when CUDA happens to be initialized here already.
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
         from expert_pruning import install_vllm_expert_pruning_router
 
         installed_router_patch = install_vllm_expert_pruning_router(

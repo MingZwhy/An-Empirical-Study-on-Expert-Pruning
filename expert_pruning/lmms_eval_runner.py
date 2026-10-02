@@ -140,9 +140,23 @@ def run_lmms_eval(args, *, tensor_parallel_size: int, short_model_name: str,
     # The chat wrapper, which is what get_model returns for "vllm" unless force_simple is asked for:
     # it builds the multimodal messages these instruct checkpoints expect.
     lm = get_model("vllm")(**model_kwargs)
+    released = False
+
+    def release_engine():
+        nonlocal released
+        if released:
+            return
+        released = True
+        if router_distribution_dir:
+            from expert_pruning.router_distribution import flush_snapshot
+
+            flush_snapshot()
+        shutdown_vllm(lm, attr="client")
+
     try:
         return _evaluate_and_save(
             args, lmms_eval, lm, tasks, started,
+            release_engine=release_engine,
             handle_non_serializable=handle_non_serializable,
             model_kwargs=model_kwargs,
             tensor_parallel_size=tensor_parallel_size,
@@ -155,17 +169,11 @@ def run_lmms_eval(args, *, tensor_parallel_size: int, short_model_name: str,
             router_distribution_dir=router_distribution_dir,
         )
     finally:
-        if router_distribution_dir:
-            from expert_pruning.router_distribution import flush_snapshot
-
-            flush_snapshot()
-        # After the statistics have been read: the counters are flushed by the engine's own
-        # processes, and tearing the engine down first could drop the last of them.
-        shutdown_vllm(lm, attr="client")
+        release_engine()
 
 
-def _evaluate_and_save(args, lmms_eval, lm, tasks, started, *, handle_non_serializable, model_kwargs,
-                       tensor_parallel_size, short_model_name, stats_dir, collect_stats,
+def _evaluate_and_save(args, lmms_eval, lm, tasks, started, *, release_engine, handle_non_serializable,
+                       model_kwargs, tensor_parallel_size, short_model_name, stats_dir, collect_stats,
                        use_local_expert_router, installed_router_patch, cache_fingerprint,
                        router_distribution_dir: str | None = None):
     from lmms_eval import evaluator
@@ -192,9 +200,12 @@ def _evaluate_and_save(args, lmms_eval, lm, tasks, started, *, handle_non_serial
                          agentic_trace_mode="basic",
                          output_path=str(Path(args.output_dir) / short_model_name)),
     )
+    elapsed = time.time() - started
+    # Before the statistics are read: each engine process writes its routing counters
+    # once more as it exits, and until then they lag by up to the flush interval.
+    release_engine()
     if raw is None:  # only the non-zero ranks of a distributed run
         return None, None
-    elapsed = time.time() - started
 
     samples = raw.pop("samples", None)
     stats = collect_stats(stats_dir)

@@ -116,6 +116,8 @@ def _model_kwargs(args, tensor_parallel_size: int) -> dict:
     if args.batch_size is not None:
         # Same meaning as in the lighteval path: a ceiling on vLLM's concurrent sequences.
         kwargs["max_num_seqs"] = args.batch_size
+    if args.max_num_batched_tokens is not None:
+        kwargs["max_num_batched_tokens"] = args.max_num_batched_tokens
     if args.pipeline_parallel_size is not None:
         kwargs["pipeline_parallel_size"] = args.pipeline_parallel_size
     if args.data_parallel_size is not None:

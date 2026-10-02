@@ -224,7 +224,10 @@ EOF
 _ep_shellquote() {
     local out=() a
     for a in "$@"; do
-        if [[ "$a" =~ ^[A-Za-z0-9_./:=,+\$-]+$ ]]; then out+=("$a"); else out+=("$(printf '%q' "$a")"); fi
+        if [[ "$a" =~ ^[A-Za-z0-9_./:=,+\$-]+$ ]]; then out+=("$a")
+        # Single quotes keep a JSON value readable; %q would backslash every brace and quote.
+        elif [[ "$a" != *"'"* ]]; then out+=("'$a'")
+        else out+=("$(printf '%q' "$a")"); fi
     done
     printf '%s' "${out[*]}"
 }
@@ -260,8 +263,17 @@ _ep_invoke() {
 
     local cmd=(python "main.py" --model_path "$EP_MODEL_PATH")
     case "$regime" in
-        generative) cmd+=(--datasets "$EP_GEN_DATASETS") ;;
-        qa)         cmd+=(--harness lm_eval --lm_eval_tasks "$EP_QA_TASKS") ;;
+        generative)
+            cmd+=(--datasets "$EP_GEN_DATASETS")
+            # Reasoning protocols reach the model through the chat template, which only
+            # the generative suite uses; the QA sets are scored as bare continuations.
+            [[ -n "${EP_CHAT_TEMPLATE_KWARGS:-}" ]] \
+                && cmd+=(--chat_template_kwargs "$EP_CHAT_TEMPLATE_KWARGS")
+            [[ -n "${EP_CHAT_TEMPLATE_KWARGS_BY_TASK:-}" ]] \
+                && cmd+=(--chat_template_kwargs_by_task "$EP_CHAT_TEMPLATE_KWARGS_BY_TASK")
+            [[ -n "${EP_CHAT_ENCODER:-}" ]] && cmd+=(--chat_encoder "$EP_CHAT_ENCODER")
+            ;;
+        qa) cmd+=(--harness lm_eval --lm_eval_tasks "$EP_QA_TASKS") ;;
     esac
     # --smoke substitutes the lengths rather than appending a second copy of the
     # flags: argparse would take the last occurrence either way, but a command

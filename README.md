@@ -537,6 +537,17 @@ results/<model>/RESULTS.md     per-model tables
   config does not add the token the model always saw first in training, and
   without it every Gemma QA score sits at chance (ARC-Easy 0.345, against 0.675
   with it).
+- **Reasoning protocols travel with the model.** Hy3, DeepSeek-V4 and Gemma 4 take
+  their reasoning settings from the chat template, and the published runs set them
+  per task: low effort for MMLU-Pro and GSM8K and high for the rest on Hy3 and
+  DeepSeek-V4, the latter rendered by the encoder it ships instead of a template,
+  and thinking on throughout for Gemma. Their `model.env` files carry these
+  settings, `main.py` applies them per task (`--chat_template_kwargs`,
+  `--chat_template_kwargs_by_task`, `--chat_encoder`) and records them in the
+  results file under `chat_protocol`. Every prompt of the seven reported
+  generative tasks then matches the published runs' archived prompts character for
+  character, GPQA up to the order of its answers, which lighteval shuffles with an
+  unseeded RNG.
 - **Generation caching is fingerprinted on the pruning configuration**, so a
   sweep cannot silently replay samples generated under different settings. See
   [`docs/compact_cache_contamination.md`](docs/compact_cache_contamination.md).

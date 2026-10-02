@@ -24,6 +24,6 @@ ep_run FixedK-k5 --num_experts_per_tok 5
 ep_run FixedK-k4 --num_experts_per_tok 4   # 2/3 budget
 ep_run FixedK-k3 --num_experts_per_tok 3
 ep_run FixedK-k2 --num_experts_per_tok 2
-ep_run FixedK-k1 --num_experts_per_tok 1
+EP_MAX_NEW_TOKENS=8192 ep_run FixedK-k1 --num_experts_per_tok 1   # published with this cap
 
 ep_end

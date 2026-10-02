@@ -1714,6 +1714,7 @@ class CustomEvaluationTracker:
         self._tracker = EvaluationTracker(output_dir=output_dir, save_details=save_details, **kwargs)
         self._expert_pruning_stats = None
         self._sample_shard_provenance = None
+        self._chat_protocol = None
 
     def __getattr__(self, name):
         return getattr(self._tracker, name)
@@ -1723,6 +1724,9 @@ class CustomEvaluationTracker:
 
     def set_sample_shard_provenance(self, provenance: dict | None) -> None:
         self._sample_shard_provenance = provenance
+
+    def set_chat_protocol(self, protocol: dict | None) -> None:
+        self._chat_protocol = protocol
 
     def save(self):
         """覆盖 save：使用 ``output_dir/<short_model_name>/{results,details}``，details 写 JSON。"""
@@ -1736,6 +1740,8 @@ class CustomEvaluationTracker:
             results_dict, dict
         ):
             results_dict["_sample_shard"] = self._sample_shard_provenance
+        if self._chat_protocol is not None and isinstance(results_dict, dict):
+            results_dict["chat_protocol"] = self._chat_protocol
         details_datasets = {}
         for task_name, task_details in self._tracker.details_logger.details.items():
             dataset = self._Dataset.from_list([self._asdict(d) for d in task_details])
@@ -1918,6 +1924,12 @@ def parse_args():
     parser.add_argument("--block_size", type=int, default=None)
     parser.add_argument("--enable_expert_parallel", action="store_true")
     parser.add_argument(
+        "--max_num_batched_tokens",
+        type=int,
+        default=None,
+        help="vLLM 每轮迭代最多处理的 token 数，决定 prefill 怎么分块。不设则用 lighteval 的默认 2048。",
+    )
+    parser.add_argument(
         "--allow_compiled_router",
         action="store_true",
         help="量化 MoE 模型保留 CUDA graph 运行，不再自动切 eager。剪枝照常生效，但路由"
@@ -1960,6 +1972,29 @@ def parse_args():
         type=int,
         default=20,
         help="top_k 采样。默认: 20",
+    )
+    parser.add_argument(
+        "--chat_template_kwargs",
+        type=str,
+        default=None,
+        help="JSON 对象，每次套 chat template 时作为关键字参数传入，用于把推理协议交给模板，"
+             "例如 '{\"enable_thinking\": true}'。会进入生成缓存指纹，并写进结果文件。",
+    )
+    parser.add_argument(
+        "--chat_template_kwargs_by_task",
+        type=str,
+        default=None,
+        help="JSON 对象，按任务覆盖 --chat_template_kwargs；键是 --datasets 里的任务名，"
+             "也可以只写冒号前的部分（gpqa 覆盖 gpqa:diamond）。例如 "
+             "'{\"mmlu_pro\": {\"reasoning_effort\": \"low\"}}'。",
+    )
+    parser.add_argument(
+        "--chat_encoder",
+        type=str,
+        default=None,
+        help="定义 encode_messages(messages, **kwargs) 的 Python 文件，代替 chat template 渲染 prompt，"
+             "上面两个参数作为它的关键字参数；相对路径按 --model_path 解析。用于 DeepSeek-V4 这类"
+             "不带 chat template、只随权重发布编码器的 checkpoint，同时强制走 chat 格式。",
     )
     parser.add_argument(
         "--output_dir",
@@ -4253,6 +4288,25 @@ def main():
 
     _configure_hf_dataset_cache_mode()
 
+    # Before the Fixed-K override below swaps model_path: a relative --chat_encoder names a
+    # file inside the original checkpoint.
+    from expert_pruning.chat_protocol import ChatProtocol
+    from expert_pruning.chat_protocol import install as install_chat_protocol
+
+    chat_protocol = ChatProtocol.from_args(args)
+    if chat_protocol:
+        if args.harness != "lighteval":
+            raise ValueError("--chat_template_kwargs / --chat_template_kwargs_by_task / "
+                             "--chat_encoder 只作用于 lighteval 的生成任务")
+        chat_protocol.check_tasks([d.strip() for d in args.datasets.split(",") if d.strip()])
+        # What the model is asked depends on these, so they are part of the cache key.
+        os.environ["EXPERT_PRUNING_CHAT_TEMPLATE_KWARGS"] = json.dumps(
+            {"common": chat_protocol.common, "by_task": chat_protocol.by_task},
+            sort_keys=True)
+        if chat_protocol.encoder_path:
+            os.environ["EXPERT_PRUNING_CHAT_ENCODER_ARTIFACT_PATH"] = chat_protocol.encoder_path
+        install_chat_protocol(chat_protocol)
+
     # 若指定 num_experts_per_tok，为本地 MoE 模型准备覆盖目录并替换 model_path
     # 覆盖目录名里带源路径摘要以避免同名 checkpoint 互相复用，但结果目录不该被摘要污染，
     # 所以保存名单独由原始模型路径推导。
@@ -4309,6 +4363,8 @@ def main():
         short_model_name=short_model_name,
         save_details=True,
     )
+    if chat_protocol:
+        evaluation_tracker.set_chat_protocol(chat_protocol.describe())
     if args.custom_tasks == "":
         custom_tasks_path = None
     elif args.custom_tasks is None:
@@ -4379,10 +4435,16 @@ def main():
         print(
             f"lighteval 生成缓存目录: {lighteval_cache_dir} "
             f"(policy={lighteval_cache_policy})")
+    if chat_protocol.encode is not None:
+        # The checkpoint has no chat template, and lighteval would otherwise fall back to
+        # scoring it as a bare continuation.
+        vllm_model_kwargs["override_chat_template"] = True
     if args.batch_size is not None:
         if args.batch_size < 1:
             raise ValueError("--batch_size 须为正整数")
         vllm_model_kwargs["max_num_seqs"] = args.batch_size
+    if args.max_num_batched_tokens is not None:
+        vllm_model_kwargs["max_num_batched_tokens"] = args.max_num_batched_tokens
     if args.seed < 0:
         raise ValueError("--seed 须为非负整数")
     vllm_model_kwargs["seed"] = args.seed

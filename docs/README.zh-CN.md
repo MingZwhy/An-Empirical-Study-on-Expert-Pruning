@@ -483,6 +483,13 @@ results/<model>/RESULTS.md     各模型结果表
   公开分数就是这么打的。套模板会改变数值并使其不可比。唯一额外加上的是
   Gemma 的 `<bos>`：它的 tokenizer 配置不会自动加这个训练时总在开头的 token，
   缺了它 Gemma 的 QA 分数全部落在随机水平（ARC-Easy 0.345，加上后 0.675）。
+- **推理协议跟着模型走。** Hy3、DeepSeek-V4 和 Gemma 4 的推理设置来自 chat template，
+  发表的运行按任务设定：Hy3 和 DeepSeek-V4 在 MMLU-Pro、GSM8K 上用 low，其余用 high，
+  其中 DeepSeek-V4 不带模板，由它随权重发布的编码器渲染；Gemma 全程开 thinking。
+  这些设置写在各自的 `model.env` 里，`main.py` 按任务应用（`--chat_template_kwargs`、
+  `--chat_template_kwargs_by_task`、`--chat_encoder`），并记进结果文件的 `chat_protocol`。
+  这样渲染出的 prompt 在七个报告的生成任务上与发表运行存档的 prompt 逐字一致，
+  GPQA 只差选项顺序——lighteval 用未设种子的随机数打乱它。
 - **生成缓存按剪枝配置指纹化**，所以一次 sweep 不会静默复用在别的设置下
   生成的样本。见 [`docs/compact_cache_contamination.md`](compact_cache_contamination.md)。
 - **已知的粗糙之处都写下来了**，没有藏：

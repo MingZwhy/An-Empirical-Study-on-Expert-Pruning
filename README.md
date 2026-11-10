@@ -175,6 +175,13 @@ like any other. The three single-factor checkpoints behind the
 matched-pair and modality figures — Qwen3-30B-A3B-Thinking, Qwen3-235B-A22B and
 Qwen3-VL-30B-A3B — are likewise reported in the paper without a page here.
 
+### Agentic tasks
+
+Fixed-K on seven agentic benchmarks (SWE-bench Verified and Pro, τ³-bench, Terminal-Bench 2.0, DABstep,
+FeatureBench and SkillsBench) with five fine-grained MoEs, run after the paper was submitted:
+[`results/agentic/RESULTS.md`](results/agentic/RESULTS.md). Near the 2/3 budget they keep 96 % of the unpruned
+score on average, about two points below the eleven benchmarks above.
+
 ## Two environments
 
 There are two install scripts, and which one you want depends only on the model.
